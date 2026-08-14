@@ -1,0 +1,4 @@
+../Core/Src/xbee_api.c:32:16:XBeeAPI_Checksum	2
+../Core/Src/xbee_api.c:39:6:XBeeAPI_Init	1
+../Core/Src/xbee_api.c:45:6:XBeeAPI_FeedByte	14
+../Core/Src/xbee_api.c:100:9:XBeeAPI_Send	2

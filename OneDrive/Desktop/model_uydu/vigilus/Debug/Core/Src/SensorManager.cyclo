@@ -1,0 +1,6 @@
+../Core/Src/SensorManager.c:54:9:SensorManager_Init	4
+../Core/Src/SensorManager.c:97:6:SensorManager_FeedGpsByte	1
+../Core/Src/SensorManager.c:103:13:UpdateAttitude	4
+../Core/Src/SensorManager.c:157:13:UpdateVerticalSpeed	2
+../Core/Src/SensorManager.c:211:6:SensorManager_Update	10
+../Core/Src/SensorManager.c:321:21:SensorManager_GetData	1

@@ -1,0 +1,5 @@
+../Core/Src/logger.c:26:9:Logger_Init	24	static
+../Core/Src/logger.c:69:9:Logger_IsReady	4	static
+../Core/Src/logger.c:74:9:Logger_Write_CSV	384	static
+../Core/Src/logger.c:141:9:Logger_Close	8	static
+../Core/Src/logger.c:158:6:Logger_DumpHead	704	static

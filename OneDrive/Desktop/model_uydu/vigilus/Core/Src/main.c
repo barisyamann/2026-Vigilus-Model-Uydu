@@ -18,14 +18,26 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "usb_host.h"
-#include <string.h>
+#include "fatfs.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 #include "SensorManager.h"
-#include "sd_spi.h"
 #include "telemetry.h"
+#include "esp32cam.h"
+#include "sd_spi.h"
+#include "logger.h"
+#include "xbee_api.h"
+#include "safety.h"
+#include "command.h"
+#include "flight_fsm.h"
+#include "aras.h"
+#include "lora_iot.h"
+#include "servo.h"
+#include "motor.h"
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,18 +58,24 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
-I2S_HandleTypeDef hi2s3;
-
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim5;
+
+UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
+UART_HandleTypeDef huart6;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
 #define GPS_RX_BUF_SIZE 256
 uint8_t gps_rx_buf[GPS_RX_BUF_SIZE];
+uint8_t esp_rx_byte;
+uint8_t xbee_rx_byte;
 
 /* USER CODE END PV */
 
@@ -66,13 +84,17 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
-static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
-void MX_USB_HOST_Process(void);
-
+static void MX_USART6_UART_Init(void);
+static void MX_UART4_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_TIM5_Init(void);
 /* USER CODE BEGIN PFP */
+void XBee_OnPacket(const uint8_t *payload, uint16_t len, uint16_t src_addr, int8_t rssi);
+void I2C_Scan(void);
 
 /* USER CODE END PFP */
 
@@ -97,6 +119,7 @@ int main(void)
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
+
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
@@ -112,62 +135,143 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_I2C1_Init();
-  MX_I2S3_Init();
   MX_SPI1_Init();
-  MX_USB_HOST_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
+  MX_USART6_UART_Init();
+  MX_FATFS_Init();
+  MX_UART4_Init();
+  MX_TIM1_Init();
+  MX_TIM3_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
+  /* Kart uzerindeki ivmeolcer SPI1'i paylasiyor - devre disi birak */
   HAL_GPIO_WritePin(CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin, GPIO_PIN_SET);
+
+  printf("[VIGILUS] Sistem baslatiliyor...\r\n");
+  I2C_Scan();
+
+  /* GPS - DMA + IDLE tabanli surekli alim */
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, gps_rx_buf, GPS_RX_BUF_SIZE);
+  LoRa_Init();
+  Servo_Init();
+  Motor_Init();
+
+  SensorManager_Init();
+  Telemetry_Init();
+  Safety_Init();
+  FlightFSM_Init();
+
+  /* ESP32 kamera koprusu - kesme tabanli bayt alimi */
+  XBeeAPI_Init(XBee_OnPacket);
+  HAL_UART_Receive_IT(&huart3, &xbee_rx_byte, 1);
+  ESP32CAM_Init();
+  HAL_UART_Receive_IT(&huart6, &esp_rx_byte, 1);
+
   if (SD_Init())
   {
-      printf("[SD] Kart hazir\r\n");
+      SD_TestReadMBR();
+      SD_TestWriteReadBack(1000000);   // ~512 MB icerisi, bos veri alani
   }
-  else
-  {
-      printf("[SD] Kart bulunamadi\r\n");
-  }
-  HAL_UARTEx_ReceiveToIdle_DMA(&huart2, gps_rx_buf, GPS_RX_BUF_SIZE);
-  SensorManager_Init();
 
-  const char *hello = "VIGILUS XBee testi - baglanti kuruldu\r\n";
-  HAL_UART_Transmit(&huart3, (uint8_t *)hello, strlen(hello), 1000);
+  /* SD kart. FatFs kendi icinde SD_Init'i cagirir, ayrica cagirmiyoruz. */
+  if (!Logger_Init())
+  {
+      printf("[HATA] SD kart loglama baslatilamadi\r\n");
+  }
+
+  printf("[VIGILUS] Sistem hazir.\r\n");
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
   while (1)
   {
-	  SensorManager_Update();
+      SensorManager_Update();
 
-	  static uint32_t last_print = 0;
-	  if (HAL_GetTick() - last_print >= 1000)
-	  {
-	      last_print = HAL_GetTick();
-	      const SensorData_t *s = SensorManager_GetData();
+      const SensorData_t *s = SensorManager_GetData();
 
-	      /* SWV konsoluna */
-	      printf("[T] alt=%.2fm vs=%.2fm/s P=%.0fPa T=%.1fC | "
-	             "pitch=%.1f roll=%.1f yaw=%.1f | "
-	             "gps fix=%u sat=%u/%u %.6f,%.6f | "
-	             "bat=%.2fV | health=0x%02X\r\n",
-	             s->altitude_m, s->vertical_speed_ms, s->pressure_pa, s->temperature_c,
-	             s->pitch_deg, s->roll_deg, s->yaw_deg,
-	             s->gps_fix, s->gps_satellites, s->gps_sats_view,
-	             s->gps_latitude, s->gps_longitude,
-	             s->battery_voltage_v, s->health_flags);
+      /* Guvenlik mantigi: ayrilma/APAM on kosullarini her turda degerlendirir.
+         Henuz gercek motor/servo cagrisi yok - sadece karar veriyor. */
+      Safety_Update(s);
 
-	      /* XBee uzerinden yer istasyonuna */
-	      Telemetry_Send(s);
-	  }
+      /* --- Ayrilma: 1000m'de otonom tetikleme (MG996R) --- */
+      static uint8_t separation_servo_done = 0;
+      if (!separation_servo_done && Safety_CanTriggerSeparation(s))
+      {
+          Servo_Separation_Trigger();
+          Safety_MarkSeparated();
+          separation_servo_done = 1;
+          printf("[SEPARATION] Servo tetiklendi (otonom, alt=%.1fm)\r\n", s->altitude_m);
+      }
+
+      /* --- APAM: otonom tetikleme veya MANUEL_APAM komutu (PE11) --- */
+      static uint8_t apam_servo_done = 0;
+      if (!apam_servo_done && Safety_ShouldTriggerAPAM())
+      {
+          Servo_APAM_Trigger();
+          apam_servo_done = 1;
+          printf("[APAM] Servo tetiklendi (PE11)\r\n");
+      }
+
+      FlightFSM_Update();
+      ARAS_Update();
+
+      /* --- Mavi buton: guvenli cikarma. Basildiktan sonra loglama durur. --- */
+      if (Logger_IsReady() && HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_SET)
+      {
+          Logger_Close();
+      }
+
+      /* --- 1 Hz: telemetri + konsol + SD log --- */
+      static uint32_t last_print = 0;
+      if (HAL_GetTick() - last_print >= 1000)
+      {
+          last_print = HAL_GetTick();
+
+          if (Logger_IsReady())
+          {
+              Logger_Write_CSV(s);
+          }
+
+          printf("[T] statu=%d alt=%.2fm vs=%.2fm/s P=%.0fPa T=%.1fC | "
+                 "pitch=%.1f roll=%.1f yaw=%.1f | "
+                 "gps fix=%u sat=%u/%u %.6f,%.6f | "
+                 "bat=%.2fV | health=0x%02X | log=%u\r\n",
+                 (int)FlightFSM_GetState(),
+                 s->altitude_m, s->vertical_speed_ms, s->pressure_pa, s->temperature_c,
+                 s->pitch_deg, s->roll_deg, s->yaw_deg,
+                 s->gps_fix, s->gps_satellites, s->gps_sats_view,
+                 s->gps_latitude, s->gps_longitude,
+                 s->battery_voltage_v, s->health_flags,
+                 Logger_IsReady());
+
+          Telemetry_Send(s);
+      }
+
+      /* --- Bir kez, 10. saniyede: yazilanin geri okunabildigini dogrula --- */
+      static uint8_t dumped = 0;
+      if (!dumped && Logger_IsReady() && HAL_GetTick() > 10000)
+      {
+          dumped = 1;
+          Logger_DumpHead();
+      }
+
+      /* --- 2 saniyede bir: kamera durum sorgusu --- */
+      static uint32_t last_cam = 0;
+      if (HAL_GetTick() - last_cam >= 2000)
+      {
+          last_cam = HAL_GetTick();
+          const char *cam_st = ESP32CAM_GetStatus();
+          printf("[CAM] %s\r\n", cam_st ? cam_st : "YANIT YOK");
+      }
+  }
     /* USER CODE END WHILE */
-    MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
-  }
-  /* USER CODE END 3 */
 }
+  /* USER CODE END 3 */
 
 /**
   * @brief System Clock Configuration
@@ -178,14 +282,9 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -199,8 +298,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -216,19 +313,9 @@ void SystemClock_Config(void)
 
 /**
   * @brief I2C1 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_I2C1_Init(void)
 {
-
-  /* USER CODE BEGIN I2C1_Init 0 */
-
-  /* USER CODE END I2C1_Init 0 */
-
-  /* USER CODE BEGIN I2C1_Init 1 */
-
-  /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
   hi2c1.Init.ClockSpeed = 100000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
@@ -242,62 +329,13 @@ static void MX_I2C1_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C1_Init 2 */
-
-  /* USER CODE END I2C1_Init 2 */
-
-}
-
-/**
-  * @brief I2S3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2S3_Init(void)
-{
-
-  /* USER CODE BEGIN I2S3_Init 0 */
-
-  /* USER CODE END I2S3_Init 0 */
-
-  /* USER CODE BEGIN I2S3_Init 1 */
-
-  /* USER CODE END I2S3_Init 1 */
-  hi2s3.Instance = SPI3;
-  hi2s3.Init.Mode = I2S_MODE_MASTER_TX;
-  hi2s3.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s3.Init.DataFormat = I2S_DATAFORMAT_16B;
-  hi2s3.Init.MCLKOutput = I2S_MCLKOUTPUT_ENABLE;
-  hi2s3.Init.AudioFreq = I2S_AUDIOFREQ_96K;
-  hi2s3.Init.CPOL = I2S_CPOL_LOW;
-  hi2s3.Init.ClockSource = I2S_CLOCK_PLL;
-  hi2s3.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
-  if (HAL_I2S_Init(&hi2s3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2S3_Init 2 */
-
-  /* USER CODE END I2S3_Init 2 */
-
 }
 
 /**
   * @brief SPI1 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_SPI1_Init(void)
 {
-
-  /* USER CODE BEGIN SPI1_Init 0 */
-
-  /* USER CODE END SPI1_Init 0 */
-
-  /* USER CODE BEGIN SPI1_Init 1 */
-
-  /* USER CODE END SPI1_Init 1 */
-  /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
@@ -314,27 +352,147 @@ static void MX_SPI1_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN SPI1_Init 2 */
+}
 
-  /* USER CODE END SPI1_Init 2 */
+/**
+  * @brief TIM1 Initialization Function
+  */
+static void MX_TIM1_Init(void)
+{
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 167;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 19999;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  HAL_TIM_MspPostInit(&htim1);
+}
+
+/**
+  * @brief TIM3 Initialization Function (2. ESC PWM - PB4/CH1)
+  */
+static void MX_TIM3_Init(void)
+{
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 83;              /* APB1 timer clk 84MHz / 84 = 1MHz -> 1us tick */
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 19999;              /* 20000 * 1us = 20ms -> 50Hz ESC sinyali */
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 1000;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  HAL_TIM_MspPostInit(&htim3);
+}
+
+/**
+  * @brief TIM5 Initialization Function (ESC PWM - PA1/CH2)
+  */
+static void MX_TIM5_Init(void)
+{
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 83;              /* APB1 timer clk 84MHz / 84 = 1MHz -> 1us tick */
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 19999;              /* 20000 * 1us = 20ms -> 50Hz ESC sinyali */
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 1000;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  HAL_TIM_MspPostInit(&htim5);
+}
+
+/**
+  * @brief UART4 Initialization Function
+  */
+static void MX_UART4_Init(void)
+{
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 9600;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 /**
   * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_USART2_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 9600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -347,27 +505,13 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
   * @brief USART3 Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_USART3_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART3_Init 0 */
-
-  /* USER CODE END USART3_Init 0 */
-
-  /* USER CODE BEGIN USART3_Init 1 */
-
-  /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
   huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
@@ -380,10 +524,25 @@ static void MX_USART3_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART3_Init 2 */
+}
 
-  /* USER CODE END USART3_Init 2 */
-
+/**
+  * @brief USART6 Initialization Function
+  */
+static void MX_USART6_UART_Init(void)
+{
+  huart6.Instance = USART6;
+  huart6.Init.BaudRate = 115200;
+  huart6.Init.WordLength = UART_WORDLENGTH_8B;
+  huart6.Init.StopBits = UART_STOPBITS_1;
+  huart6.Init.Parity = UART_PARITY_NONE;
+  huart6.Init.Mode = UART_MODE_TX_RX;
+  huart6.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart6.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart6) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 /**
@@ -391,33 +550,21 @@ static void MX_USART3_UART_Init(void)
   */
 static void MX_DMA_Init(void)
 {
-
-  /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
 
-  /* DMA interrupt init */
-  /* DMA1_Stream1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
-  /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
-
 }
 
 /**
   * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
   */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
 
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
@@ -425,34 +572,23 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(CS_I2C_SPI_GPIO_Port, CS_I2C_SPI_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, CS_I2C_SPI_Pin|BUZZER_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port, OTG_FS_PowerSwitchOn_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOD, LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin|Audio_RST_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
-                          |Audio_RST_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : CS_I2C_SPI_Pin */
-  GPIO_InitStruct.Pin = CS_I2C_SPI_Pin;
+  GPIO_InitStruct.Pin = CS_I2C_SPI_Pin|BUZZER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(CS_I2C_SPI_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : OTG_FS_PowerSwitchOn_Pin */
   GPIO_InitStruct.Pin = OTG_FS_PowerSwitchOn_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(OTG_FS_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PDM_OUT_Pin */
   GPIO_InitStruct.Pin = PDM_OUT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -460,19 +596,23 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BOOT1_Pin */
+  GPIO_InitStruct.Pin = I2S3_WS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+  HAL_GPIO_Init(I2S3_WS_GPIO_Port, &GPIO_InitStruct);
+
   GPIO_InitStruct.Pin = BOOT1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BOOT1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : CLK_IN_Pin */
   GPIO_InitStruct.Pin = CLK_IN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -480,40 +620,50 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(CLK_IN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SD_CS_Pin */
   GPIO_InitStruct.Pin = SD_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SD_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD4_Pin LD3_Pin LD5_Pin LD6_Pin
-                           Audio_RST_Pin */
-  GPIO_InitStruct.Pin = LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
-                          |Audio_RST_Pin;
+  GPIO_InitStruct.Pin = LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin|Audio_RST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : OTG_FS_OverCurrent_Pin */
+  GPIO_InitStruct.Pin = VBUS_FS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(VBUS_FS_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = OTG_FS_ID_Pin|OTG_FS_DM_Pin|OTG_FS_DP_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = I2S3_SD_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+  HAL_GPIO_Init(I2S3_SD_GPIO_Port, &GPIO_InitStruct);
+
   GPIO_InitStruct.Pin = OTG_FS_OverCurrent_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(OTG_FS_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : MEMS_INT2_Pin */
   GPIO_InitStruct.Pin = MEMS_INT2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
 int _write(int file, char *ptr, int len)
 {
 	for (int i = 0; i < len; i++)
@@ -521,6 +671,19 @@ int _write(int file, char *ptr, int len)
 		ITM_SendChar((uint32_t)ptr[i]);
 	}
 	return len;
+}
+
+void I2C_Scan(void)
+{
+    printf("[I2C SCAN] baslıyor...\r\n");
+    for (uint8_t addr = 1; addr < 128; addr++)
+    {
+        if (HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 10) == HAL_OK)
+        {
+            printf("[I2C SCAN] cihaz bulundu: 0x%02X\r\n", addr);
+        }
+    }
+    printf("[I2C SCAN] bitti.\r\n");
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
@@ -531,40 +694,42 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 		{
 			SensorManager_FeedGpsByte(gps_rx_buf[i]);
 		}
-		/* KRITIK: ReceiveToIdle_DMA tek seferliktir - her callback sonunda
-		   yeniden kurulmazsa alim tamamen durur. */
 		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, gps_rx_buf, GPS_RX_BUF_SIZE);
 	}
 }
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	if (huart->Instance == USART6)
+	{
+		ESP32CAM_FeedByte(esp_rx_byte);
+		HAL_UART_Receive_IT(&huart6, &esp_rx_byte, 1);
+	}
+	else if (huart->Instance == USART3)
+	{
+		XBeeAPI_FeedByte(xbee_rx_byte);
+		HAL_UART_Receive_IT(&huart3, &xbee_rx_byte, 1);
+	}
+}
+
+void XBee_OnPacket(const uint8_t *payload, uint16_t len, uint16_t src_addr, int8_t rssi)
+{
+	printf("[XBEE RX] src=0x%04X rssi=%ddBm len=%u: %.*s\r\n",
+	       src_addr, rssi, len, len, (const char *)payload);
+	Command_Parse(payload, len);
+}
+
 /* USER CODE END 4 */
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

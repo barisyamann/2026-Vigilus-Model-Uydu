@@ -22,24 +22,43 @@
  *   9  Pil Gerilimi
  */
 
+/*
+ * telemetry.c
+ *
+ * Guncellenmis Versiyon:
+ * 1. SD Kart/Debug icin 140+ byte CSV formati uretir.
+ * 2. XBee icin 59 byte'lik SIKISTIRILMIS BINARY formati uretir ve gonderir.
+ */
+
 #include "telemetry.h"
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include "xbee_api.h"
 
 extern UART_HandleTypeDef huart3;
 
 static uint32_t packet_counter = 0;
 static uint8_t  satellite_status = 0;
-static char     error_code[8]  = "00000";
-static char     rhrhrh_code[8] = "000000";
+static char     error_code_str[8]  = "00000";
+static char     rhrhrh_code_str[8] = "000000";
+
+/*
+ * String olarak gelen "00001", "10010" gibi binary kodlari
+ * 1 byte'lik sayiya (0-255) cevirir.
+ */
+static uint8_t StringHataKodunuSayiyaCevir(const char* kod) {
+    // 2 rakami, stringin ikilik (binary) tabanda oldugunu belirtir.
+    return (uint8_t)strtol(kod, NULL, 2);
+}
 
 void Telemetry_Init(void)
 {
     packet_counter = 0;
     satellite_status = 0;
-    strcpy(error_code, "00000");
-    strcpy(rhrhrh_code, "000000");
+    strcpy(error_code_str, "00000");
+    strcpy(rhrhrh_code_str, "000000");
 }
 
 void Telemetry_SetStatus(uint8_t status)
@@ -49,14 +68,14 @@ void Telemetry_SetStatus(uint8_t status)
 
 void Telemetry_SetErrorCode(const char *code)
 {
-    strncpy(error_code, code, sizeof(error_code) - 1);
-    error_code[sizeof(error_code) - 1] = '\0';
+    strncpy(error_code_str, code, sizeof(error_code_str) - 1);
+    error_code_str[sizeof(error_code_str) - 1] = '\0';
 }
 
 void Telemetry_SetRhrhrh(const char *code)
 {
-    strncpy(rhrhrh_code, code, sizeof(rhrhrh_code) - 1);
-    rhrhrh_code[sizeof(rhrhrh_code) - 1] = '\0';
+    strncpy(rhrhrh_code_str, code, sizeof(rhrhrh_code_str) - 1);
+    rhrhrh_code_str[sizeof(rhrhrh_code_str) - 1] = '\0';
 }
 
 uint32_t Telemetry_GetPacketCount(void)
@@ -66,18 +85,13 @@ uint32_t Telemetry_GetPacketCount(void)
 
 void Telemetry_Send(const SensorData_t *s)
 {
-    char packet[256];
-
     packet_counter++;
 
-    /*
-     * Tarih-saat: GPS fix varsa gercek UTC zamani, yoksa placeholder.
-     * NOT: Sartname, islemci yeniden baslasa bile zaman verisinin
-     * korunmasini istiyor (istek 17). GPS zamani bu sarti dogal olarak
-     * saglar cunku disaridan gelir - ama fix yokken bosluk olusur.
-     * Faz 10'da RTC yedek register'lariyla bu bosluk kapatilacak.
-     */
-    int len = snprintf(packet, sizeof(packet),
+    /* ==============================================================
+     * 1. BOLUM: SD KART VE DEBUG ICIN CSV STRING OLUSTURMA
+     * ============================================================== */
+    char packet_csv[256];
+    int len_csv = snprintf(packet_csv, sizeof(packet_csv),
         "%lu,%u,%s,%02u/%02u/20%02u %02u:%02u:%02u,"
         "%.1f,%.1f,%.2f,%.1f,%.2f,"
         "%.6f,%.6f,%.1f,"
@@ -85,7 +99,7 @@ void Telemetry_Send(const SensorData_t *s)
         "%s,%lu\r\n",
         packet_counter,
         satellite_status,
-        error_code,
+        error_code_str,
         s->gps_day, s->gps_month, s->gps_year,
         s->gps_hour, s->gps_minute, s->gps_second,
         s->pressure_pa,
@@ -99,11 +113,54 @@ void Telemetry_Send(const SensorData_t *s)
         s->pitch_deg,
         s->roll_deg,
         s->yaw_deg,
-        rhrhrh_code,
+        rhrhrh_code_str,
         (unsigned long)TEAM_NUMBER);
 
-    if (len > 0)
+    if (len_csv > 0)
     {
-        HAL_UART_Transmit(&huart3, (uint8_t *)packet, (uint16_t)len, 1000);
+        // Debug portundan eski formati gorebilmek icin (Istege Bagli):
+        // printf("%s", packet_csv);
+
+        // TODO: SD Karta yazma fonksiyonunuzu buraya ekleyebilirsiniz:
+        // Ornek: SD_Card_Write(packet_csv, len_csv);
     }
+
+    /* ==============================================================
+     * 2. BOLUM: XBEE UZERINDEN SIKISTIRILMIS BINARY (59 Byte) GONDERIM
+     * ============================================================== */
+    XBeeTelemetriPaketi_t binary_paket;
+
+    binary_paket.takim_no = (uint32_t)TEAM_NUMBER;
+    binary_paket.paket_sayaci = packet_counter;
+
+    binary_paket.gun = s->gps_day;
+    binary_paket.ay = s->gps_month;
+    binary_paket.yil = s->gps_year;
+    binary_paket.saat = s->gps_hour;
+    binary_paket.dakika = s->gps_minute;
+    binary_paket.saniye = s->gps_second;
+
+    binary_paket.uydu_statusu = satellite_status;
+
+    // 5 haneli String hata kodlarini ("10100" gibi) 1 Byte'lik sayiya ceviriyoruz
+    binary_paket.hata_kodu_num = StringHataKodunuSayiyaCevir(error_code_str);
+    memcpy(binary_paket.rhrhrh, rhrhrh_code_str, 6);
+
+    binary_paket.basinc = s->pressure_pa;
+    binary_paket.yukseklik = s->altitude_m;
+    binary_paket.inis_hizi = s->vertical_speed_ms;
+    binary_paket.sicaklik = s->temperature_c;
+    binary_paket.pil_gerilimi = s->battery_voltage_v;
+
+    // GPS double verilerini float (4 byte) olarak kestirip atiyoruz
+    binary_paket.gps_enlem = (float)s->gps_latitude;
+    binary_paket.gps_boylam = (float)s->gps_longitude;
+    binary_paket.gps_yukseklik = s->gps_altitude_m;
+
+    binary_paket.pitch = s->pitch_deg;
+    binary_paket.roll = s->roll_deg;
+    binary_paket.yaw = s->yaw_deg;
+
+    // 59 Byte'lik ham (binary) structi XBee fonksiyonuna gonderiyoruz
+    XBeeAPI_Send(XBEE_DEST_ADDR, (uint8_t *)&binary_paket, sizeof(XBeeTelemetriPaketi_t));
 }

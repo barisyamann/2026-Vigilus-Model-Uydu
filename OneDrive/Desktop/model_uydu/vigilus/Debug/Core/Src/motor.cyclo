@@ -1,0 +1,5 @@
+../Core/Src/motor.c:19:13:SetThrottleUs	3
+../Core/Src/motor.c:28:6:Motor_Init	1
+../Core/Src/motor.c:39:6:Motor_IncreaseRPM	1
+../Core/Src/motor.c:45:6:Motor_DecreaseRPM	1
+../Core/Src/motor.c:51:6:Motor_RunSigma	1

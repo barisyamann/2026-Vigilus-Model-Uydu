@@ -24,6 +24,17 @@
 
 /* Dikey hiz alcak gecirgen filtre katsayisi (0-1, kucuk = daha cok filtre) */
 #define VSPEED_FILTER_ALPHA 0.3f
+/* Ivme tabanli dikey hiz tahmini icin agirlik - VARSAYIM, PDR test
+   planindaki "Terminal Hiz ve Inis Testi" (drone ile serbest birakma)
+   sirasinda gercek deger ile kalibre edilmeli */
+#define VSPEED_COMPLEMENTARY_ALPHA 0.98f
+#define GRAVITY_MS2 9.81f
+
+
+/* Complementary filter agirligi: jiroskopa ne kadar guvenilecek (0-1).
+   Yuksek deger = jiroskop agirlikli (hizli tepki, uzun vadede az kayma
+   duzeltmesi); dusuk deger = ivmeolcer agirlikli (yavas ama mutlak referans). */
+#define COMPLEMENTARY_ALPHA 0.98f
 
 /* Bu sure boyunca GPS'ten byte gelmezse modul ariza sayilir */
 #define GPS_TIMEOUT_MS      2000
@@ -92,14 +103,38 @@ void SensorManager_FeedGpsByte(uint8_t byte)
 static void UpdateAttitude(void)
 {
     /*
-     * Pitch/Roll: yercekimi vektorunun eksenlere dagilimindan trigonometriyle.
-     * Statik/yavas hareketlerde dogru; yuksek ivme altinda (motor itkisi,
-     * carpma) sapar - Faz 12'de Kalman ile jiroskopla birlestirecegiz.
+     * Ivmeolcerden ani (anlik) aci tahmini - dogru ama titresim/ivme altinda
+     * gurultulu. Jiroskoptan integre edilen aci - kisa vadede duzgun ama
+     * zamanla kayar. Complementary filter ikisini birlestirir: jiroskopun
+     * hizli tepkisini kullanir, ivmeolcerle uzun vadeli referansa cekilir.
      */
     float ax = data.accel_x_g, ay = data.accel_y_g, az = data.accel_z_g;
 
-    data.roll_deg  = atan2f(ay, az) * RAD_TO_DEG;
-    data.pitch_deg = atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD_TO_DEG;
+    float accel_roll  = atan2f(ay, az) * RAD_TO_DEG;
+    float accel_pitch = atan2f(-ax, sqrtf(ay * ay + az * az)) * RAD_TO_DEG;
+
+    static uint32_t last_att_ms = 0;
+    uint32_t now_att = HAL_GetTick();
+
+    if (last_att_ms == 0)
+    {
+        /* Ilk calisma: integrasyon icin onceki deger yok, dogrudan ivmeolcerle basla */
+        data.roll_deg  = accel_roll;
+        data.pitch_deg = accel_pitch;
+    }
+    else
+    {
+        float dt = (now_att - last_att_ms) / 1000.0f;
+
+        float gyro_roll  = data.roll_deg  + data.gyro_x_dps * dt;
+        float gyro_pitch = data.pitch_deg + data.gyro_y_dps * dt;
+
+        data.roll_deg  = COMPLEMENTARY_ALPHA * gyro_roll
+                        + (1.0f - COMPLEMENTARY_ALPHA) * accel_roll;
+        data.pitch_deg = COMPLEMENTARY_ALPHA * gyro_pitch
+                        + (1.0f - COMPLEMENTARY_ALPHA) * accel_pitch;
+    }
+    last_att_ms = now_att;
 
     /*
      * Yaw: manyetometre olmadigi icin sadece jiroskop Z ekseni integrali.
@@ -107,16 +142,16 @@ static void UpdateAttitude(void)
      * degil - yaw sonumleme diferansiyel RPM ile yapiliyor.
      */
     static uint32_t last_yaw_ms = 0;
-    uint32_t now = HAL_GetTick();
+    uint32_t now_yaw = HAL_GetTick();
     if (last_yaw_ms != 0)
     {
-        float dt = (now - last_yaw_ms) / 1000.0f;
+        float dt = (now_yaw - last_yaw_ms) / 1000.0f;
         data.yaw_deg += data.gyro_z_dps * dt;
 
         data.yaw_deg = fmodf(data.yaw_deg, 360.0f);
         if (data.yaw_deg < 0.0f) data.yaw_deg += 360.0f;
     }
-    last_yaw_ms = now;
+    last_yaw_ms = now_yaw;
 }
 
 static void UpdateVerticalSpeed(void)
@@ -127,20 +162,57 @@ static void UpdateVerticalSpeed(void)
     if (dt_ms < 100) return;   // cok kisa araliklarda turev gurultuyu buyutur
 
     float dt_s = dt_ms / 1000.0f;
-    float raw_vspeed = (prev_altitude_m - data.altitude_m) / dt_s;  // alcalma = pozitif
+    float raw_baro_vspeed = (prev_altitude_m - data.altitude_m) / dt_s;  // alcalma = pozitif
 
-    /* Basit alcak gecirgen filtre - baro gurultusunu sonumler */
-    data.vertical_speed_ms = VSPEED_FILTER_ALPHA * raw_vspeed
+    /*
+     * Ivmeolcer tabanli tahmin: govde eksenindeki ivmeyi pitch/roll ile
+     * dunya (dikey) eksenine projekte ediyoruz, durgun haldeki +1g
+     * referansini cikarip gercek ivmeyi buluyoruz, sonra entegre
+     * ediyoruz. Kisa vadede duzgun (dusuk gurultulu) ama zamanla kayar -
+     * barometre ile complementary filter'a sokuluyor, UpdateAttitude'daki
+     * pitch/roll fuzyonuyla ayni mimari.
+     *
+     * VARSAYIM: rotasyon formulunun isareti bu projenin ozel eksen
+     * duzeltmesiyle (X ekseni 180 derece ters montaj) dogrulanmadi.
+     * Asagidaki [VSPEED-TANI] ciktisiyla elle kontrol et: kartı hafifce
+     * YUKARI kaldirinca "fused" gecici olarak NEGATIF, AŞAĞI indirince
+     * gecici olarak POZITIF olmali (alcalma=pozitif kuralimiza gore).
+     */
+    float pitch_rad = data.pitch_deg / RAD_TO_DEG;
+    float roll_rad  = data.roll_deg  / RAD_TO_DEG;
+
+    float accel_world_up_g =
+          (-sinf(pitch_rad) * data.accel_x_g)
+        + ( sinf(roll_rad) * cosf(pitch_rad) * data.accel_y_g)
+        + ( cosf(roll_rad) * cosf(pitch_rad) * data.accel_z_g);
+
+    float accel_true_ms2 = (accel_world_up_g - 1.0f) * GRAVITY_MS2;
+
+    static float accel_vspeed_ms = 0.0f;
+    accel_vspeed_ms -= accel_true_ms2 * dt_s;   // yukari ivme -> azalan (dusme) hiz
+
+    float fused = VSPEED_COMPLEMENTARY_ALPHA * accel_vspeed_ms
+                + (1.0f - VSPEED_COMPLEMENTARY_ALPHA) * raw_baro_vspeed;
+
+    accel_vspeed_ms = fused;   // entegrasyonu barometreye dogru cek (drift duzeltmesi)
+
+    /* GECICI TANI: raw barometre ile fuzyonu yan yana bas - elle
+       yukari/asagi hareket ettirip isareti dogrula. Is bitince silinecek. */
+
+
+    data.vertical_speed_ms = VSPEED_FILTER_ALPHA * fused
                              + (1.0f - VSPEED_FILTER_ALPHA) * data.vertical_speed_ms;
 
     prev_altitude_m  = data.altitude_m;
     prev_alt_time_ms = now;
 }
 
+
 void SensorManager_Update(void)
 {
     uint32_t now = HAL_GetTick();
 
+    /* --- IMU --- */
     /* --- IMU --- */
     if ((now - last_imu_ms) >= PERIOD_IMU_MS)
     {
@@ -148,12 +220,19 @@ void SensorManager_Update(void)
         MPU9250_Data_t imu;
         if (MPU9250_ReadData(&imu))
         {
-            data.accel_x_g  = imu.accel_x_g;
-            data.accel_y_g  = imu.accel_y_g;
-            data.accel_z_g  = imu.accel_z_g;
-            data.gyro_x_dps = imu.gyro_x_dps;
-            data.gyro_y_dps = imu.gyro_y_dps;
-            data.gyro_z_dps = imu.gyro_z_dps;
+            /*
+             * Kart breadboard'a X ekseni etrafinda 180 derece ters monte
+             * edilmis: X ayni kalir, Y ve Z isaret degistirir. Duzeltmeyi
+             * TEK YERDE, ham veriyi SensorData_t'ye yazarken yapiyoruz ki
+             * UpdateAttitude ve ileride complementary filter hep dogru
+             * eksenlerle calissin.
+             */
+            data.accel_x_g  =  imu.accel_x_g;
+            data.accel_y_g  = -imu.accel_y_g;
+            data.accel_z_g  = -imu.accel_z_g;
+            data.gyro_x_dps =  imu.gyro_x_dps;
+            data.gyro_y_dps = -imu.gyro_y_dps;
+            data.gyro_z_dps = -imu.gyro_z_dps;
 
             UpdateAttitude();
             data.health_flags |= SENSOR_OK_MPU9250;
@@ -195,6 +274,8 @@ void SensorManager_Update(void)
             data.battery_voltage_v = pwr.bus_voltage_v;
             data.current_a         = pwr.current_a;
             data.health_flags |= SENSOR_OK_INA226;
+            printf("[INA226 DEBUG] bus=%.3fV shunt=%.3fmV current=%.3fA power=%.3fW\r\n",
+                   pwr.bus_voltage_v, pwr.shunt_voltage_mv, pwr.current_a, pwr.power_w);
         }
         else
         {

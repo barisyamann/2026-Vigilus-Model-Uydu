@@ -1,0 +1,14 @@
+../Core/Src/sd_spi.c:62:13:SD_Burst	1
+../Core/Src/sd_spi.c:68:16:SD_RxByte	3
+../Core/Src/sd_spi.c:81:13:SD_Clocks	3
+../Core/Src/sd_spi.c:102:13:SD_SetSpeed	1
+../Core/Src/sd_spi.c:121:16:SD_WaitReady	3
+../Core/Src/sd_spi.c:138:16:SD_CRC7	4
+../Core/Src/sd_spi.c:173:16:SD_SendCmd	7
+../Core/Src/sd_spi.c:215:9:SD_Init	24
+../Core/Src/sd_spi.c:387:11:SD_GetType	1
+../Core/Src/sd_spi.c:400:17:SD_BlockToAddr	2
+../Core/Src/sd_spi.c:406:9:SD_ReadBlock	10
+../Core/Src/sd_spi.c:457:9:SD_WriteBlock	5
+../Core/Src/sd_spi.c:514:9:SD_TestReadMBR	5
+../Core/Src/sd_spi.c:547:9:SD_TestWriteReadBack	10

@@ -1,0 +1,6 @@
+../Core/Src/SensorManager.c:54:9:SensorManager_Init	8	static
+../Core/Src/SensorManager.c:97:6:SensorManager_FeedGpsByte	16	static
+../Core/Src/SensorManager.c:103:13:UpdateAttitude	64	static
+../Core/Src/SensorManager.c:157:13:UpdateVerticalSpeed	56	static
+../Core/Src/SensorManager.c:211:6:SensorManager_Update	160	static,ignoring_inline_asm
+../Core/Src/SensorManager.c:321:21:SensorManager_GetData	4	static

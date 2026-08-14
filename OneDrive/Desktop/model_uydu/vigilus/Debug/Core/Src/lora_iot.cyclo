@@ -1,0 +1,2 @@
+../Core/Src/lora_iot.c:15:6:LoRa_Init	1
+../Core/Src/lora_iot.c:20:6:LoRa_SendRhrhrh	2

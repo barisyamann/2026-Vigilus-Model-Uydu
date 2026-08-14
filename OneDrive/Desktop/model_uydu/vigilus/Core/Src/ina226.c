@@ -5,7 +5,7 @@
 
 extern I2C_HandleTypeDef hi2c1;
 
-#define INA226_ADDR             (0x40 << 1)   // A0/A1 pinleri GND ise 0x40
+#define INA226_ADDR             (0x44 << 1)   // A0/A1 pinleri GND ise 0x40
 
 /* Register adresleri */
 #define INA226_CONFIG_REG       0x00
