@@ -1,4 +1,0 @@
-../Core/Src/flight_fsm.c:38:6:FlightFSM_Init	1
-../Core/Src/flight_fsm.c:46:15:FlightFSM_GetState	1
-../Core/Src/flight_fsm.c:52:16:CheckAltitudeTrend	2
-../Core/Src/flight_fsm.c:65:6:FlightFSM_Update	20

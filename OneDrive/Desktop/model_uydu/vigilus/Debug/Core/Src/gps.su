@@ -1,9 +1,0 @@
-../Core/Src/gps.c:12:16:GPS_ChecksumOk	24	static
-../Core/Src/gps.c:38:16:GPS_SplitFields	32	static
-../Core/Src/gps.c:60:15:GPS_ToDecimalDegrees	56	static
-../Core/Src/gps.c:74:13:GPS_ParseRMC	72	static
-../Core/Src/gps.c:103:13:GPS_ParseGGA	80	static
-../Core/Src/gps.c:114:13:GPS_ParseGSV	48	static
-../Core/Src/gps.c:128:13:GPS_ParseLine	16	static
-../Core/Src/gps.c:147:6:GPS_Init	8	static
-../Core/Src/gps.c:155:6:GPS_ProcessByte	16	static

@@ -1,7 +1,0 @@
-../Core/Src/esp32cam.c:23:6:ESP32CAM_Init	1
-../Core/Src/esp32cam.c:32:6:ESP32CAM_FeedByte	5
-../Core/Src/esp32cam.c:54:16:SendCommand	3
-../Core/Src/esp32cam.c:77:9:ESP32CAM_Ping	2
-../Core/Src/esp32cam.c:83:9:ESP32CAM_SetActive	3
-../Core/Src/esp32cam.c:89:9:ESP32CAM_Mark	2
-../Core/Src/esp32cam.c:97:13:ESP32CAM_GetStatus	2

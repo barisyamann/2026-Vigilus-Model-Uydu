@@ -1,9 +1,0 @@
-../Core/Src/safety.c:31:6:Safety_Init	1
-../Core/Src/safety.c:41:6:Safety_MarkSeparated	1
-../Core/Src/safety.c:53:9:Safety_CanTriggerSeparation	7
-../Core/Src/safety.c:74:6:Safety_Update	18
-../Core/Src/safety.c:166:9:Safety_ShouldTriggerAPAM	1
-../Core/Src/safety.c:171:9:Safety_IsLanded	1
-../Core/Src/safety.c:176:9:Safety_IsIMUHealthy	2
-../Core/Src/safety.c:187:6:Safety_ManualTriggerAPAM	1
-../Core/Src/safety.c:191:9:Safety_HasSeparated	1

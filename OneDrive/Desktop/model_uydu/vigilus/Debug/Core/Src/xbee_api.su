@@ -1,4 +1,0 @@
-../Core/Src/xbee_api.c:32:16:XBeeAPI_Checksum	24	static
-../Core/Src/xbee_api.c:39:6:XBeeAPI_Init	16	static
-../Core/Src/xbee_api.c:45:6:XBeeAPI_FeedByte	32	static
-../Core/Src/xbee_api.c:100:9:XBeeAPI_Send	432	static

@@ -1,3 +1,0 @@
-../Core/Src/mpu9250.c:17:9:MPU9250_Init	32	static
-../Core/Src/mpu9250.c:46:9:MPU9250_ReadData	64	static
-../Core/Src/mpu9250.c:73:6:MPU9250_CalibrateGyro	56	static

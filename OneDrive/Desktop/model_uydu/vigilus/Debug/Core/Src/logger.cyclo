@@ -1,5 +1,0 @@
-../Core/Src/logger.c:26:9:Logger_Init	6
-../Core/Src/logger.c:69:9:Logger_IsReady	1
-../Core/Src/logger.c:74:9:Logger_Write_CSV	8
-../Core/Src/logger.c:141:9:Logger_Close	3
-../Core/Src/logger.c:158:6:Logger_DumpHead	3

@@ -1,4 +1,0 @@
-../Core/Src/ina226.c:66:16:INA226_ReadReg16	40	static
-../Core/Src/ina226.c:79:16:INA226_WriteReg16	40	static
-../Core/Src/ina226.c:90:9:INA226_Init	32	static
-../Core/Src/ina226.c:124:9:INA226_ReadData	24	static

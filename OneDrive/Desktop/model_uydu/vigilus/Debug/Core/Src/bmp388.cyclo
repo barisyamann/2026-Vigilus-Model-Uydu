@@ -1,6 +1,0 @@
-../Core/Src/bmp388.c:28:13:BMP388_ReadCalibration	3
-../Core/Src/bmp388.c:68:9:BMP388_Init	3
-../Core/Src/bmp388.c:101:14:compensate_temperature	1
-../Core/Src/bmp388.c:112:14:compensate_pressure	1
-../Core/Src/bmp388.c:139:6:BMP388_ReadData	2
-../Core/Src/bmp388.c:156:6:BMP388_SetGroundReference	5
