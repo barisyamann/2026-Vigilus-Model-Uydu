@@ -1,0 +1,7 @@
+../Core/Src/telemetry.c:51:16:StringHataKodunuSayiyaCevir	1
+../Core/Src/telemetry.c:56:6:Telemetry_Init	1
+../Core/Src/telemetry.c:64:6:Telemetry_SetStatus	1
+../Core/Src/telemetry.c:69:6:Telemetry_SetErrorCode	1
+../Core/Src/telemetry.c:75:6:Telemetry_SetRhrhrh	1
+../Core/Src/telemetry.c:81:10:Telemetry_GetPacketCount	1
+../Core/Src/telemetry.c:86:6:Telemetry_Send	1

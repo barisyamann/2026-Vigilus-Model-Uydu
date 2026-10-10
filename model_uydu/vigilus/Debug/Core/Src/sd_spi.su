@@ -1,0 +1,14 @@
+../Core/Src/sd_spi.c:62:13:SD_Burst	24	static
+../Core/Src/sd_spi.c:68:16:SD_RxByte	16	static
+../Core/Src/sd_spi.c:81:13:SD_Clocks	40	static
+../Core/Src/sd_spi.c:102:13:SD_SetSpeed	40	static
+../Core/Src/sd_spi.c:121:16:SD_WaitReady	24	static
+../Core/Src/sd_spi.c:138:16:SD_CRC7	32	static
+../Core/Src/sd_spi.c:173:16:SD_SendCmd	40	static
+../Core/Src/sd_spi.c:215:9:SD_Init	64	static
+../Core/Src/sd_spi.c:387:11:SD_GetType	4	static
+../Core/Src/sd_spi.c:400:17:SD_BlockToAddr	16	static
+../Core/Src/sd_spi.c:406:9:SD_ReadBlock	40	static
+../Core/Src/sd_spi.c:457:9:SD_WriteBlock	32	static
+../Core/Src/sd_spi.c:514:9:SD_TestReadMBR	528	static
+../Core/Src/sd_spi.c:547:9:SD_TestWriteReadBack	40	static

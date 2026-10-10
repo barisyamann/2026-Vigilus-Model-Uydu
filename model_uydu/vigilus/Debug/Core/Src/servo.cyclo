@@ -1,0 +1,3 @@
+../Core/Src/servo.c:18:6:Servo_Init	1
+../Core/Src/servo.c:25:6:Servo_Separation_Trigger	2
+../Core/Src/servo.c:32:6:Servo_APAM_Trigger	2

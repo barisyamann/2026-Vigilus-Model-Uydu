@@ -1,0 +1,2 @@
+../Core/Src/lora_iot.c:15:6:LoRa_Init	4	static
+../Core/Src/lora_iot.c:20:6:LoRa_SendRhrhrh	32	static
